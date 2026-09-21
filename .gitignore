@@ -1,0 +1,7 @@
+*.data
+*.data.old
+*.obj
+*.exe
+output/
+*.svg
+before_piano.md5

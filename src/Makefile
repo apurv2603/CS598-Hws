@@ -1,9 +1,9 @@
 FUNC := g++
-output := -o 
-copt := -c 
+output := -o
+copt := -c
 SRC_DIR := ./
 OBJ_DIR := ./
-FLAGS := -O3 -g -Werror
+FLAGS := -O3 -flto -g -Werror
 
 CPP_FILES := $(wildcard *.cpp)
 OBJ_FILES := $(addprefix $(OBJ_DIR),$(notdir $(CPP_FILES:.cpp=.obj)))
