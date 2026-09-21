@@ -1,4 +1,5 @@
 #include "texture.h"
+#include <cmath>
 
 double interpolate(double a,double b,double x)
 {
@@ -9,10 +10,8 @@ double interpolate(double a,double b,double x)
 Texture::Texture(double am, double op, double ref):ambient(am),opacity(op), reflection(ref){}
 
 double fix(double a){
-   a = fmod(a, 1.);
-   if(a<0) a+=1.;
-   return a;
-}
+    return a - std::floor(a);
+ }
 
 double ground(double e){
    return (e>1.)?1.:e;
@@ -27,12 +26,12 @@ const char* findExtension(const char* ola){
 }
 
 char lowerCase(char c){
-   if ((c >= 'A') && (c <= 'Z')) 
-      return c-'a'+'A'; 
-   else 
+   if ((c >= 'A') && (c <= 'Z'))
+      return c-'a'+'A';
+   else
       return c;
 }
- 
+
 int fpeek(FILE *stream)
 {
    int c;
@@ -40,10 +39,10 @@ int fpeek(FILE *stream)
    ungetc(c, stream);
    return c;
 }
-  
+
 bool extensionEquals(const char* a, const char* knownExt){
    while(*a!='\0'){
-      if(a[0] != knownExt[0]) 
+      if(a[0] != knownExt[0])
          return false;
       a++;
       knownExt++;
