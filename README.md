@@ -96,7 +96,7 @@ If we inspect the input file `inputs/elephant.ray` we see that it loads the mesh
 data/x.txt 1586 data/f.txt 3168 -1.58 -.43 2.7
 ```
 
-The goal here is to speed up the program sufficiently to make a high resolution circle of the elephant mesh (found in `data/elepx.txt` and `data/elepf.txt`), which contains 111748 triangles. One can edit the `.ray` file and comment out the sphere mesh and replace it with `data/elepx.txt 62779 data/elepf.txt 111748 -1.58 -.43 2.7` (this is done in `inputs/realelephant.ray`).
+The goal here is to speed up the program sufficiently to make a high resolution circle of the elephant mesh (found in `data/elepx.txt` and `data/elepf.txt`), which contains 111748 triangles. The repository provides two separate scenes: `inputs/elephant.ray` activates the sphere mesh and `inputs/realelephant.ray` activates `data/elepx.txt 62779 data/elepf.txt 111748 -1.58 -.43 2.7` for the full elephant. Keep the two files separate rather than toggling mesh lines before each benchmark.
 
 ## Code Overview
 
@@ -139,3 +139,169 @@ For ease of use and installation, we provide a docker image capable of running a
 You can build this yourself manually by running `cd docker && docker build -t <myusername>/598ape`. Alternatively we have pushed a pre-built version to `wsmoses/598ape` on Dockerhub.
 
 You can then use the Docker container to build and run your code. If you run `./dockerrun.sh` you will enter an interactive bash session with all the packages from docker installed (that script by default uses `wsmoses/598ape`, feel free to replace it with whatever location you like if you built from scratch). The current directory (aka this folder) is mounted within `/host`. Any files you create on your personal machine will be available there, and anything you make in the container in that folder will be available on your personal machine.
+
+
+---
+
+# Artifact evaluation and reproducibility
+
+This README documents the artifact submitted for CS598 APE Mini-Paper 1. The artifact is the **private Git repository** at https://github.com/apurv2603/CS598-Hws; artifact reviewers must be granted access. This section supplements the starter scene descriptions and Docker instructions above.
+
+## Requirements and environment
+
+The implementation runs on a standard CPU; it does not require a GPU or special ISA. Use a Unix-like environment with GNU Make and `g++` supporting `-O3`, `-flto` and OpenMP (`-fopenmp`). FFmpeg is needed for movie generation, and ImageMagick for optional non-PPM conversion. The measurements below were collected on UIUC teaching VM `fa26-cs598a-038` using the program's internal render timer, **not in Docker**. Docker is optional; the supplied Docker setup is not claimed to have been tested with this submission.
+
+Record the environment and exact revision when reproducing:
+
+```bash
+g++ --version | head -1
+nproc
+lscpu | grep -E 'Model name|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket'
+git rev-parse HEAD
+```
+
+## Obtain and build
+
+Clone the private repository with an account that has access. All commands below run from its root:
+
+```bash
+git clone https://github.com/apurv2603/CS598-Hws.git
+cd CS598-Hws
+make clean && make -j
+mkdir -p output
+```
+
+The optimized build uses `-O3 -flto` in object compilation and `-O3 -flto -fopenmp` when linking `main.exe`. Check the final link command for `-fopenmp`; an earlier merge accidentally omitted it. The numerical results from that incorrectly linked build must not be used as parallel timings. Run `git status --short` to check for local changes; reproduce the submitted version from the `main` commit supplied through the GitHub submission link.
+
+For a render timing, use the application's `Total time to create images=... seconds` output. This is the image-creation time and excludes FFmpeg encoding, which runs afterward. The benchmarks use `--ppm` to avoid non-PPM image conversion.
+
+## Individual optimization revisions
+
+The following commits isolate the original development sequence. Each historical stage must be built separately (`make clean && make -j`) and compared using identical inputs, resolution, frames and animation flags. A development-branch timing should not automatically be attributed to the final integrated build.
+
+| Stage | Git commit / branch | Change |
+|---|---|---|
+| Historical baseline | `19bbc81` | Starter implementation; unoptimized object compilation (`-O0`) |
+| Compiler | `c5f89c4`, `opt/compiler` | Change object compilation to `-O3` |
+| Nearest-hit selection | `e2071d2`, `opt/calccolor` | Replace per-ray allocation, copy and sort with a linear minimum-hit search |
+| Pixel parallelism | `c627e6c`, `opt/parallel` | OpenMP pixel loop, initially with static scheduling; compare 1, 2 and 4 threads |
+| Teammate optimizations | `adi-optimizations` | LTO, texture-coordinate wrapping, and triangle-specific intersection coefficients; see the branch's Git history |
+| Integration point | `76082ba` | Merge of development lines; predates subsequent OpenMP link correction |
+| Submitted code | Current `main` in the repository link | Integration, final link flags, scheduling adjustment and later triangle-file updates; use `git rev-parse HEAD` to obtain its immutable ID |
+
+To inspect or rebuild a historical version **in a separate disposable clone**:
+
+```bash
+git checkout c627e6c
+make clean && make -j
+```
+
+Replace the hash with the relevant stage; do not switch versions in a checkout containing uncommitted changes. OpenMP thread scaling uses `OMP_NUM_THREADS=1`, `2` or `4` while keeping all other arguments fixed. The original baseline does not use OpenMP. The teammate's later `triangle.h` and `triangle.cpp` updates should be evaluated as a separate change against the immediately preceding integrated revision, not attributed to the initial `c627e6c` OpenMP stage.
+
+## Reproduce the four workloads
+
+Use the named scene file to select the mesh. `inputs/elephant.ray` contains the **sphere** even though its filename says elephant; `inputs/realelephant.ray` is the **full elephant**. These are different workloads. For consistent four-thread evaluations, specify `OMP_NUM_THREADS=4 OMP_DYNAMIC=FALSE`. The historical log did not consistently specify these environment variables; its timings are preserved below as historical observations, not controlled final comparisons.
+
+### Piano room: 500 × 500, one frame
+
+```bash
+OMP_NUM_THREADS=4 OMP_DYNAMIC=FALSE ./main.exe \
+  -i inputs/pianoroom.ray --ppm -o output/piano.ppm -W 500 -H 500
+```
+
+### Globe: 300 × 300, one frame
+
+```bash
+OMP_NUM_THREADS=4 OMP_DYNAMIC=FALSE ./main.exe \
+  -i inputs/globe.ray --ppm --no-movie -F 1 \
+  -o output/globe.ppm -W 300 -H 300
+```
+
+For the animated globe (a **separate** workload):
+
+```bash
+OMP_NUM_THREADS=4 OMP_DYNAMIC=FALSE ./main.exe \
+  -i inputs/globe.ray --ppm -a inputs/globe.animate \
+  --movie -F 24 -W 300 -H 300 -o output/globe.mp4
+```
+
+### Sphere: 3,168 triangles, 100 × 100, 24 frames
+
+The active mesh line in `inputs/elephant.ray` is:
+
+```text
+data/x.txt 1586 data/f.txt 3168 -1.58 -.43 2.7
+```
+
+Run:
+
+```bash
+OMP_NUM_THREADS=4 OMP_DYNAMIC=FALSE ./main.exe \
+  -i inputs/elephant.ray --ppm -a inputs/elephant.animate \
+  --movie -F 24 -W 100 -H 100 -o output/sphere.mp4
+```
+
+### Full elephant: 111,748 triangles, 100 × 100, 24 frames
+
+The active mesh line in `inputs/realelephant.ray` is:
+
+```text
+data/elepx.txt 62779 data/elepf.txt 111748 -1.58 -.43 2.7
+```
+
+The sphere line must be commented out. The author visually checked that the generated animation depicts a rotating elephant. Reviewers should use the separate input path rather than editing `inputs/elephant.ray` or relying on the movie's filename:
+
+```bash
+OMP_NUM_THREADS=4 OMP_DYNAMIC=FALSE ./main.exe \
+  -i inputs/realelephant.ray --ppm -a inputs/elephant.animate \
+  --movie -F 24 -W 100 -H 100 -o output/elephant.mp4
+```
+
+For a faster single-frame smoke test (not comparable to the animated run):
+
+```bash
+OMP_NUM_THREADS=4 OMP_DYNAMIC=FALSE ./main.exe \
+  -i inputs/realelephant.ray --ppm --no-movie -F 1 \
+  -W 100 -H 100 -o output/elephant_frame.ppm
+```
+
+Check that both mesh inputs are tracked in the submitted revision using:
+
+```bash
+git ls-files inputs/elephant.ray inputs/realelephant.ray
+```
+
+## Historical performance measurements
+
+Times below are the program's render-timer outputs on the teaching VM, in seconds, not end-to-end video creation. Piano values in the historical optimization sequence are medians; globe values are single runs. Historical timings may come from different commits and must not be interpreted as isolated measurements of the final LTO, triangle or scheduling changes.
+
+| Workload | Configuration | Render time (s) | Qualification |
+|---|---|---:|---|
+| Piano, 500 × 500, one frame | Original | 2.420159 | Historical median |
+| Piano | `-O3` | 1.039030 | Historical median |
+| Piano | `-O3` + nearest-hit | 0.891595 | Historical median |
+| Piano | OpenMP, 2 threads | 0.505178 | Historical median |
+| Piano | OpenMP, 4 threads | 0.263462 | Historical median; 9.19× relative to original |
+| Globe, 300 × 300, one frame | Original | 0.577668 | Historical single run; exact animation flags not retained |
+| Globe | Compiler + nearest-hit | 0.257292 | Historical single run |
+| Globe | OpenMP, 4 threads | 0.136562 | Historical single run |
+| Sphere, 100 × 100, 24 animated frames | Earlier run | 437.956207 | Command targeted `inputs/elephant.ray`; active mesh at run time not independently recorded |
+| Sphere/elephant mesh experiment, 100 × 100, 24 animated frames | Later reported scheduling experiment | 425.452179 | Same input path; actual active mesh and thread configuration not independently recorded; **not an isolated schedule benchmark** |
+| Mesh experiment, 100 × 100, 24 animated frames | After later triangle-file edits | 421.670410 | Command used `inputs/elephant.ray` with author-toggled mesh; exact active mesh in that run not independently preserved; cannot assign speedup to the triangle change alone |
+| Sphere, 100 × 100, 24 animated frames | Later run with sphere scene | 8.862888 | Sphere mesh confirmed in the surrounding scene-file workflow; post-merge build |
+
+Both the sphere and full-elephant animations were visually inspected by the author and reportedly played correctly. The full-elephant **render time and same-input baseline are not independently established by the supplied logs** because runs used the same scene path while the mesh declarations were manually toggled. No full-elephant speedup is claimed in this README. In particular, 82 minutes for 24 frames must not be compared to an 18-second *single frame* or to a run of the sphere mesh.
+
+For an isolated comparison, retain the exact baseline and final Git revisions and run the same **committed** scene path, animation, resolution and frame count. Fix the thread count explicitly; repeat short runs at least three times and report the median when practical. A variation of a few seconds over a seven-minute render should not be attributed to one code change without controlled runs.
+
+## Correctness and interpretation
+
+Piano PPMs were compared byte-for-byte across the original, compiler, nearest-hit, and OpenMP development stages. A merged piano output also matched the earlier four-thread image. The author also visually inspected sphere and elephant videos. Visual playback demonstrates that an animation was generated and looks plausible; it does **not** establish numerical equivalence to the baseline or that every animation frame matches.
+
+To compare an image against a reference produced with the **same scene, camera/animation position, frame, resolution and output format**:
+
+```bash
+cmp -s output/reference.ppm output/optimized.ppm && echo PASS || echo FAIL
+```
+
+For animated scenes, save and compare corresponding source PPM frames before FFmpeg cleans up its temporary frames, or produce matched single-frame outputs with the same animation state. Compare raw PPMs, not encoded MP4 byte streams.
